@@ -10,7 +10,7 @@ import { arrayExtensions } from './array-extensions';
 import { booleanExtensions } from './boolean-extensions';
 import { dateExtensions } from './date-extensions';
 import { joinExpression, splitExpression } from './expression-parser';
-import type { ExpressionChunk, ExpressionCode } from './expression-parser';
+import type { ExpressionChunk } from './expression-parser';
 import type { ExtensionMap } from './extensions';
 import { numberExtensions } from './number-extensions';
 import { objectExtensions } from './object-extensions';
@@ -61,7 +61,8 @@ const EXPRESSION_EXTENSION_REGEX = new RegExp(
 	`(\\$if|\\.(${EXPRESSION_EXTENSION_METHODS.join('|')})\\s*(\\?\\.)?)\\s*\\(`,
 );
 
-const isExpressionExtension = (str: string) => EXPRESSION_EXTENSION_METHODS.some((m) => m === str);
+export const isExpressionExtension = (str: string) =>
+	EXPRESSION_EXTENSION_METHODS.some((m) => m === str);
 
 export const hasExpressionExtension = (str: string): boolean =>
 	EXPRESSION_EXTENSION_REGEX.test(str);
@@ -420,11 +421,11 @@ export const extendTransform = (expression: string): { code: string } | undefine
 					path.replace(
 						types.builders.conditionalExpression(
 							// eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
-							test as any,
+							test,
 							// eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
-							consequent as any,
+							consequent,
 							// eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
-							alternative as any,
+							alternative,
 						),
 					);
 				}
@@ -622,7 +623,7 @@ export function extendSyntax(bracketedExpression: string, forceExtend = false): 
 			return {
 				...chunk,
 				text,
-			} as ExpressionCode;
+			};
 		}
 		return chunk;
 	});

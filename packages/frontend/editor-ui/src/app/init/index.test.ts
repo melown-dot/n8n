@@ -4,6 +4,7 @@ import { initializeAuthenticatedFeatures, initializeCore, state } from '@/app/in
 import { AuthenticationMethod } from '@n8n/api-types';
 import { useCloudPlanStore } from '@n8n/stores/cloudPlan.store';
 import { useNodeTypesStore } from '@/app/stores/nodeTypes.store';
+import { useCredentialsStore } from '@/features/credentials/credentials.store';
 import { useSettingsStore } from '@n8n/stores/settings.store';
 import { useSourceControlStore } from '@/features/integrations/sourceControl.ee/sourceControl.store';
 import { useSSOStore } from '@/features/settings/sso/sso.store';
@@ -23,6 +24,8 @@ import { mock } from 'vitest-mock-extended';
 import { telemetry } from '@/app/plugins/telemetry';
 import { registerToastNotifier } from '@/app/init/toastNotifier';
 import * as moduleInitializer from '@/app/moduleInitializer/moduleInitializer';
+import { initializeExpressionEngine } from '@/app/init/expressionEngine';
+import { flushPromises } from '@vue/test-utils';
 
 const showMessage = vi.fn();
 const showToast = vi.fn();
@@ -68,6 +71,12 @@ vi.mock('@/app/init/toastNotifier', () => ({
 	registerToastNotifier: vi.fn(),
 }));
 
+// The real one dynamically imports the QuickJS runtime bundle, which has no
+// place in this graph. It stays inert on the default `legacy` setting anyway.
+vi.mock('@/app/init/expressionEngine', () => ({
+	initializeExpressionEngine: vi.fn(),
+}));
+
 vi.mock('@n8n/stores/users.store', () => ({
 	useUsersStore: vi.fn().mockReturnValue({
 		initialize: vi.fn(),
@@ -85,6 +94,7 @@ describe('Init', () => {
 	let sourceControlStore: ReturnType<typeof mockedStore<typeof useSourceControlStore>>;
 	let usersStore: ReturnType<typeof mockedStore<typeof useUsersStore>>;
 	let nodeTypesStore: ReturnType<typeof mockedStore<typeof useNodeTypesStore>>;
+	let credentialsStore: ReturnType<typeof mockedStore<typeof useCredentialsStore>>;
 	let versionsStore: ReturnType<typeof mockedStore<typeof useVersionsStore>>;
 	let ssoStore: ReturnType<typeof mockedStore<typeof useSSOStore>>;
 	let rootStore: ReturnType<typeof mockedStore<typeof useRootStore>>;
@@ -103,6 +113,7 @@ describe('Init', () => {
 		cloudPlanStore = mockedStore(useCloudPlanStore);
 		sourceControlStore = mockedStore(useSourceControlStore);
 		nodeTypesStore = mockedStore(useNodeTypesStore);
+		credentialsStore = mockedStore(useCredentialsStore);
 		usersStore = mockedStore(useUsersStore);
 		versionsStore = mockedStore(useVersionsStore);
 		versionsStore = mockedStore(useVersionsStore);
@@ -189,6 +200,29 @@ describe('Init', () => {
 				versionCli: '1.102.0',
 				userRole: 'global:member',
 			});
+		});
+
+		it('should start the expression engine from the settings payload', async () => {
+			await initializeCore();
+
+			expect(initializeExpressionEngine).toHaveBeenCalledWith('legacy');
+		});
+
+		// Public settings omit the engine, so an unauthenticated boot leaves the
+		// legacy evaluator in place and the login hook is the first point where
+		// the choice is known.
+		it('should start the expression engine in the login hook with authenticated settings', async () => {
+			settingsStore.getSettings.mockImplementation(async () => {
+				settingsStore.settings.expressionEngine = 'quickjs';
+			});
+			usersStore.registerLoginHook.mockImplementation(async (hook) => {
+				await hook(mock<CurrentUserResponse>({ id: 'userId' }));
+			});
+
+			await initializeCore();
+
+			expect(initializeExpressionEngine).toHaveBeenCalledTimes(2);
+			expect(initializeExpressionEngine).toHaveBeenLastCalledWith('quickjs');
 		});
 
 		it('should re-initialize ssoStore in login hook with authenticated settings', async () => {
@@ -288,6 +322,65 @@ describe('Init', () => {
 			expect(sourceControlSpy).not.toHaveBeenCalled();
 			expect(nodeTranslationSpy).not.toHaveBeenCalled();
 			expect(versionsSpy).not.toHaveBeenCalled();
+			expect(nodeTypesStore.loadNodeTypesIfNotLoaded).not.toHaveBeenCalled();
+			expect(credentialsStore.fetchAllCredentials).not.toHaveBeenCalled();
+			expect(credentialsStore.fetchCredentialTypes).not.toHaveBeenCalled();
+		});
+
+		it('loads node types before authenticated pages render', async () => {
+			settingsStore.isCloudDeployment = false;
+			usersStore.currentUser = mock<IUser>({ id: '123', globalScopes: ['user:list'] });
+			const { promise, resolve } = Promise.withResolvers<void>();
+			nodeTypesStore.loadNodeTypesIfNotLoaded.mockReturnValueOnce(promise);
+			let initialized = false;
+			const initializing = initializeAuthenticatedFeatures(false).then(() => {
+				initialized = true;
+			});
+
+			await flushPromises();
+			expect(initialized).toBe(false);
+
+			resolve();
+			await initializing;
+			expect(initialized).toBe(true);
+		});
+
+		it('loads credentials and credential types before authenticated pages render', async () => {
+			settingsStore.isCloudDeployment = false;
+			usersStore.currentUser = mock<IUser>({ id: '123', globalScopes: ['user:list'] });
+			const credentials = Promise.withResolvers<[]>();
+			const credentialTypes = Promise.withResolvers<void>();
+			credentialsStore.fetchAllCredentials.mockReturnValueOnce(credentials.promise);
+			credentialsStore.fetchCredentialTypes.mockReturnValueOnce(credentialTypes.promise);
+			let initialized = false;
+			const initializing = initializeAuthenticatedFeatures(false).then(() => {
+				initialized = true;
+			});
+
+			await flushPromises();
+			expect(credentialsStore.fetchAllCredentials).toHaveBeenCalledTimes(1);
+			expect(credentialsStore.fetchCredentialTypes).toHaveBeenCalledWith(false);
+			expect(initialized).toBe(false);
+
+			// Each request must hold up init on its own.
+			credentials.resolve([]);
+			await flushPromises();
+			expect(initialized).toBe(false);
+
+			credentialTypes.resolve();
+			await initializing;
+			expect(initialized).toBe(true);
+		});
+
+		it('fetches credentials and credential types only once across repeated calls', async () => {
+			settingsStore.isCloudDeployment = false;
+			usersStore.currentUser = mock<IUser>({ id: '123', globalScopes: ['user:list'] });
+
+			await initializeAuthenticatedFeatures(false);
+			await initializeAuthenticatedFeatures();
+
+			expect(credentialsStore.fetchAllCredentials).toHaveBeenCalledTimes(1);
+			expect(credentialsStore.fetchCredentialTypes).toHaveBeenCalledTimes(1);
 		});
 
 		it('should init authenticated features only once if user is logged in', async () => {

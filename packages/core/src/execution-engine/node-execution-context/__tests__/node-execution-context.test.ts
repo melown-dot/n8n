@@ -256,6 +256,7 @@ describe('NodeExecutionContext', () => {
 				undefined,
 				false,
 				undefined,
+				undefined,
 			);
 		});
 
@@ -307,6 +308,9 @@ describe('NodeExecutionContext', () => {
 				{ id: null, name: 'slackApi' },
 				'slackApi',
 				'internal',
+				undefined,
+				undefined,
+				undefined,
 				undefined,
 			);
 		});
@@ -362,6 +366,39 @@ describe('NodeExecutionContext', () => {
 			);
 
 			await expect(ctx['_getCredentials']('someCred')).resolves.toEqual({ token: 'ok' });
+		});
+	});
+
+	describe('_getRunlessCredentials', () => {
+		it('should pass placeholder execute data that only carries the node', async () => {
+			const credentialDetails = { id: 'cred-runless', name: 'Runless Cred' };
+			const runlessNode = mock<INode>({ type: 'n8n-nodes-base.httpRequest' });
+			runlessNode.credentials = { someCred: credentialDetails };
+
+			const mockCredentialsHelper = {
+				getDecrypted: vi.fn().mockResolvedValue({ token: 'ok' }),
+				getCredentialsProperties: vi.fn(),
+				isCredentialUsableByNode: vi.fn().mockReturnValue(true),
+			};
+
+			const ctx = new TestContext(
+				workflow,
+				runlessNode,
+				mock<IWorkflowExecuteAdditionalData>({ credentialsHelper: mockCredentialsHelper }),
+				mode,
+			);
+
+			await expect(ctx['_getRunlessCredentials']('someCred')).resolves.toEqual({ token: 'ok' });
+			expect(mockCredentialsHelper.getDecrypted).toHaveBeenCalledWith(
+				expect.anything(),
+				credentialDetails,
+				'someCred',
+				mode,
+				{ data: {}, node: runlessNode, source: null },
+				false,
+				undefined,
+				undefined,
+			);
 		});
 	});
 
@@ -558,6 +595,19 @@ describe('NodeExecutionContext', () => {
 			);
 			nodeTypes.getByNameAndVersion.mockReturnValue(nodeType);
 		});
+
+		it('rejects signed resume URLs in the engine process', () => {
+			const previousInstanceType = instanceSettings.instanceType;
+			Object.assign(instanceSettings, { instanceType: 'engine' });
+			try {
+				expect(() => testContext.getSignedResumeUrl()).toThrow(
+					'Engine v2 does not support signed resume URLs yet',
+				);
+			} finally {
+				Object.assign(instanceSettings, { instanceType: previousInstanceType });
+			}
+		});
+
 		it('should return a resume URL with HMAC signature', () => {
 			const result = testContext.getSignedResumeUrl();
 

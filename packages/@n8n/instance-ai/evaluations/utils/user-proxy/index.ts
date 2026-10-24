@@ -51,6 +51,8 @@ export interface CredentialCreationConfig {
 	 *  credentials with no way to tell which one an agent picked). Defaults to
 	 *  a fresh, unshared `Map` if omitted. */
 	nameCounts?: Map<string, number>;
+	/** The build's project. Absent: the client's personal project. */
+	projectId?: string;
 }
 
 /**
@@ -272,13 +274,13 @@ export class UserProxyLlm {
 			// throw here means that invariant broke, not a normal runtime failure.
 			throw new Error('createCredential invoked without a credentialCreation config');
 		}
-		const { client, threadId, createdCredentialIds } = this.credentialCreation;
+		const { client, threadId, createdCredentialIds, projectId } = this.credentialCreation;
 		const created = await createOneCredential(
 			client,
 			credentialType,
 			undefined,
 			this.createdCredentialNameCounts,
-			{ logger: this.logger, setupHint: options?.setupHint },
+			{ logger: this.logger, setupHint: options?.setupHint, projectId },
 		);
 		createdCredentialIds?.add(created.id);
 		this.allowlistedCredentialIds = [...this.allowlistedCredentialIds, created.id];
@@ -481,7 +483,7 @@ export class UserProxyLlm {
 		const turns: Array<{ index: number; text: string }> = [];
 		for (let index = 0; index < this.script.length; index++) {
 			const turn = this.script[index];
-			if (!turn || turn.role !== 'user' || this.sentScriptUserTurnIndexes.has(index)) continue;
+			if (turn?.role !== 'user' || this.sentScriptUserTurnIndexes.has(index)) continue;
 			turns.push({ index, text: turn.text });
 		}
 		return turns;
