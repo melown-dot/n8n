@@ -1,15 +1,15 @@
 {
   "name": "n8n-personal-insights-fork",
-  "version": "2.39.8-personal.1",
+  "version": "2.44.6-personal.1",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.18.3",
   "scripts": {
     "lint": "biome check *.mjs test/*.mjs",
     "typecheck": "tsc --allowJs --checkJs --noEmit --target es2023 --module nodenext --moduleResolution nodenext --skipLibCheck *.mjs",
-    "build": "docker build -t n8n-personal:2.39.8 .",
-    "test:patch": "docker run --rm --network none --entrypoint node --mount type=bind,src=.,dst=/fork,readonly docker.n8n.io/n8nio/n8n:2.39.8@sha256:b73045abaddb40cb4024e86eea1b1f69093501a7339f685a4cd486b7743d23ae --test --experimental-test-coverage --test-coverage-include=/fork/patch-license.mjs /fork/test/patch.test.mjs",
-    "test:runtime": "docker run --rm --network none --entrypoint node --mount type=bind,src=.,dst=/fork,readonly n8n-personal:2.39.8 --test /fork/test/license.test.mjs"
+    "build": "docker build -t n8n-personal:2.44.6 .",
+    "test:patch": "docker run --rm --network none --entrypoint node --mount type=bind,src=.,dst=/fork,readonly docker.n8n.io/n8nio/n8n:2.44.6@sha256:d02752c6ab446ae9db8deec2f9cc887c378f77cdcad31650814df936b7386dfb --test --experimental-test-coverage --test-coverage-include=/fork/patch-license.mjs /fork/test/patch.test.mjs",
+    "test:runtime": "docker run --rm --network none --entrypoint node --mount type=bind,src=.,dst=/fork,readonly n8n-personal:2.44.6 --test /fork/test/license.test.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.2.4",

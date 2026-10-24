@@ -227,10 +227,22 @@ if (mode === 'setup') {
 	);
 } else {
 	state = JSON.parse(await readFile('private/state.json', 'utf8'));
-	cookie = state.cookie;
+	assert.ok(process.env.OWNER_PASSWORD, 'Set the fixture owner password');
+	// Version upgrades can invalidate saved sessions. Authenticate normally on
+	// every verification run instead of mistaking public settings for features.
+	await call('/rest/login', {
+		method: 'POST',
+		body: {
+			emailOrLdapLoginId: 'owner@fork.test',
+			password: process.env.OWNER_PASSWORD,
+		},
+	});
+	state.cookie = cookie;
+	await writeFile('private/state.json', JSON.stringify(state), { mode: 0o600 });
 }
 
 const settings = await call('/rest/settings');
+assert.equal(settings.settingsMode, 'authenticated');
 assert.equal(settings.enterprise.sharing, mode !== 'rollback');
 assert.equal(
 	settings.enterprise.projects.team.limit,
@@ -362,7 +374,33 @@ if (mode === 'rollback') {
 	process.exit(0);
 }
 
-const executions = await call('/rest/executions?limit=100');
+const firstPage = await call('/rest/executions?limit=100');
+const executions = { ...firstPage, results: [...firstPage.results] };
+const cursors = new Set();
+let nextCursor = firstPage.nextCursor;
+while (nextCursor) {
+	assert.ok(
+		cursors.size < 100,
+		'Synthetic ledger exceeds the pagination bound',
+	);
+	assert.ok(!cursors.has(nextCursor), 'Execution cursor repeated');
+	cursors.add(nextCursor);
+	const page = await call(
+		`/rest/executions?limit=100&cursor=${encodeURIComponent(nextCursor)}`,
+	);
+	assert.equal(
+		page.count,
+		executions.count,
+		'Execution ledger changed during read',
+	);
+	executions.results.push(...page.results);
+	nextCursor = page.nextCursor;
+}
+assert.equal(executions.results.length, executions.count);
+assert.equal(
+	new Set(executions.results.map((execution) => execution.id)).size,
+	executions.count,
+);
 let summary, byWorkflow, byTime;
 for (let attempt = 0; attempt < 90; attempt++) {
 	summary = await call('/rest/insights/summary');

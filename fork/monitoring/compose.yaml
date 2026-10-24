@@ -1,0 +1,108 @@
+name: n8n-monitoring-pilot
+x-bounded: &bounded
+  restart: "${MONITORING_RESTART_POLICY:-no}"
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  pids_limit: 100
+  logging:
+    driver: json-file
+    options: {max-size: 5m, max-file: '2'}
+services:
+  prometheus:
+    <<: *bounded
+    image: prom/prometheus:v3.15.1@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2
+    mem_limit: 256m
+    cpus: 0.25
+    read_only: true
+    command: ['--config.file=/etc/prometheus/prometheus.yml', '--storage.tsdb.path=/prometheus', '--storage.tsdb.retention.time=24h', '--storage.tsdb.retention.size=128MB', '--query.max-concurrency=2', '--query.timeout=5s']
+    volumes: ['./prometheus.yml:/etc/prometheus/prometheus.yml:ro', 'prometheus:/prometheus']
+    networks: [isolated]
+    ulimits:
+      fsize: {soft: 268435456, hard: 268435456}
+  grafana:
+    <<: *bounded
+    pids_limit: 256
+    image: grafana/grafana:13.2.4@sha256:dbbc38ea21103cefb50396340cd88afec779c7e070b0a7bf5a75b4ce46651d3f
+    mem_limit: 320m
+    cpus: 0.25
+    read_only: true
+    tmpfs: ['/tmp:size=32m']
+    environment:
+      GOMAXPROCS: '2'
+      GOMEMLIMIT: 256MiB
+      GF_SECURITY_ADMIN_USER: pilot
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?required}
+      GF_AUTH_ANONYMOUS_ENABLED: 'false'
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+      GF_USERS_ALLOW_ORG_CREATE: 'false'
+      GF_ANALYTICS_REPORTING_ENABLED: 'false'
+      GF_ANALYTICS_CHECK_FOR_UPDATES: 'false'
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: 'false'
+      GF_UNIFIED_ALERTING_ENABLED: 'false'
+      GF_ALERTING_ENABLED: 'false'
+      GF_LOG_LEVEL: warn
+      GF_PLUGINS_PREINSTALL_DISABLED: 'true'
+    volumes: ['grafana:/var/lib/grafana', './grafana/provisioning:/etc/grafana/provisioning:ro', './dashboards:/etc/grafana/dashboards:ro']
+    networks: [isolated]
+    ulimits:
+      fsize: {soft: 134217728, hard: 134217728}
+  analytics:
+    <<: *bounded
+    image: ${ANALYTICS_IMAGE:?Set the verified immutable Analytics image ID}
+    pull_policy: never
+    mem_limit: 320m
+    cpus: 0.5
+    read_only: true
+    tmpfs: ['/tmp:size=16m']
+    environment:
+      ANALYTICS_OWNER_ONLY: 'true'
+      DASHBOARD_JWT_SECRET: ${DASHBOARD_JWT_SECRET:?required}
+      DASHBOARD_DB_HOST: ${SOURCE_DB_HOST:-db}
+      DASHBOARD_DB_PORT: '5432'
+      DASHBOARD_DB_NAME: ${SOURCE_DB_DATABASE:-fork_test}
+      DASHBOARD_DB_USER: ${ANALYTICS_DB_ROLE:-monitoring_readonly}
+      DASHBOARD_DB_PASS: ${ANALYTICS_DB_PASSWORD:?required}
+      DASHBOARD_DB_PATH: /data/dashboard.sqlite
+      ANALYTICS_MAX_DB_BYTES: '134217728'
+      DASHBOARD_DB_POOL_MAX: '2'
+      DASHBOARD_DB_STATEMENT_TIMEOUT_MS: '5000'
+      DASHBOARD_DB_CONNECT_TIMEOUT_MS: '3000'
+      N8N_EDITOR_BASE_URL: ${N8N_EDITOR_BASE_URL:-http://localhost:15678}
+      SYNC_INTERVAL_MINUTES: '5'
+      SYNC_ID_OVERLAP: '25'
+      SYNC_EXEC_BATCH_LIMIT: '200'
+      SYNC_CATCHUP_MAX_PASSES: '5'
+      ERROR_CHUNK_SIZE: '10'
+      ERROR_BATCH_LIMIT: '20'
+      MAX_ERROR_PAYLOAD_BYTES: '262144'
+      ERROR_DETAIL_RETENTION_DAYS: '1'
+      ERROR_STACK_RETENTION_DAYS: '1'
+      SYNC_METADATA_VALUES: 'false'
+      PROFILE_SAMPLES: '1'
+      PROFILE_WORKFLOWS_PER_PASS: '2'
+      PROFILE_BUDGET_MS: '2000'
+      SAVE_DEBUG_ERRORS: 'false'
+      LOG_FILE: 'off'
+      LOG_LEVEL: warn
+    volumes: ['analytics:/data']
+    networks: [isolated]
+    ulimits:
+      fsize: {soft: 134217728, hard: 134217728}
+  gateway:
+    <<: *bounded
+    image: node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914
+    entrypoint: [node, /gateway.mjs]
+    environment: {PROM_PASSWORD: '${PROM_PASSWORD:?required}'}
+    volumes: ['./gateway.mjs:/gateway.mjs:ro']
+    read_only: true
+    mem_limit: 64m
+    cpus: 0.1
+    ports: ['127.0.0.1:13000:3000', '127.0.0.1:19090:9090', '127.0.0.1:13001:3001']
+    networks: [ingress, isolated]
+networks:
+  isolated: {external: true, name: "${MONITORING_NETWORK:-n8n2398-fork-test_isolated}"}
+  ingress: {}
+volumes:
+  prometheus: {}
+  grafana: {}
+  analytics: {}
