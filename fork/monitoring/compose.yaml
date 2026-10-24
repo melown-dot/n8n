@@ -92,8 +92,11 @@ services:
     <<: *bounded
     image: node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914
     entrypoint: [node, /gateway.mjs]
-    environment: {PROM_PASSWORD: '${PROM_PASSWORD:?required}'}
-    volumes: ['./gateway.mjs:/gateway.mjs:ro']
+    environment:
+      PROM_PASSWORD: '${PROM_PASSWORD:?required}'
+      METRICS_NETWORK_CIDR: '${METRICS_NETWORK_CIDR:-}'
+      METRICS_FILE_PATH: /metrics/unified.prom
+    volumes: ['./gateway.mjs:/gateway.mjs:ro', './metrics-endpoint.mjs:/metrics-endpoint.mjs:ro', './metrics:/metrics:ro']
     read_only: true
     mem_limit: 64m
     cpus: 0.1

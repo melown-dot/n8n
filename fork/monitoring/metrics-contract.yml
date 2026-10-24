@@ -1,0 +1,40 @@
+openapi: 3.0.3
+info:
+  title: Internal aggregate monitoring metrics
+  version: 1.0.0
+  description: >-
+    Serve one bounded Prometheus snapshot. Bind only to the configured internal
+    Docker network interface. Do not publish this port. No request input selects
+    files or queries. The snapshot contains no credentials or business payloads.
+servers:
+  - url: http://gateway:9109
+paths:
+  /metrics:
+    get:
+      operationId: getAggregateMetrics
+      security: []
+      description: >-
+        Internal network access only. No application authentication is used.
+        Prometheus calls once per minute. Return at most 262144 bytes.
+        Return 503 if the file is absent, older than 180 seconds, or dated more than30seconds in the future.
+        Require a regular file. Do not follow symlinks. Read at most262145bytes and reject oversize data.
+        Do not block on FIFOs. Invalid or missing internal interface and bind failure disable only metrics; existing proxy listeners continue.
+        Ignore no input: reject query strings and unknown paths with 404.
+        Only GET is supported. Return 405 for other methods.
+        Every response uses Cache-Control no-store and X-Content-Type-Options nosniff.
+        Scrape success means file freshness, not individual component health.
+        Component success and last-success timestamp metrics define data validity.
+      responses:
+        '200':
+          description: Fresh bounded snapshot.
+          content:
+            text/plain:
+              schema: {type: string, maxLength: 262144}
+        '404': {description: Unknown path or query string.}
+        '405':
+          description: Unsupported method.
+          headers:
+            Allow:
+              schema: {type: string, enum: [GET]}
+        '413': {description: Snapshot exceeds the maximum size.}
+        '503': {description: Snapshot is missing, stale, unreadable or invalid.}
