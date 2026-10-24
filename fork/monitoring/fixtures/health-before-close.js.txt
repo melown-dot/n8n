@@ -1,0 +1,129 @@
+// Pure local evaluator. No mutations, HTTP calls, credentials or automatic retries.
+function evaluateHealth(input) {
+  const now = Number(input.now);
+  if (!Number.isFinite(now)) throw Error('A finite observation time is required');
+  for (const k of ['ledger','archive','sources','previous','acks']) if (!Array.isArray(input[k])) throw Error(k+' must be a complete array');
+  const cfg = {pendingMinutes:15, sendingMinutes:5, backlogCount:100, ...input.config};
+  if(![cfg.pendingMinutes,cfg.sendingMinutes,cfg.backlogCount].every(v=>Number.isFinite(v)&&v>0))throw Error('Invalid health threshold');
+  const expected = input.expectedSources || [{key:'backup5m',maxAgeMinutes:15},{key:'daily',maxAgeMinutes:90},{key:'history14d',maxAgeMinutes:1560}];
+  const observed = new Date(now).toISOString();
+  // A partial/corrupt prior-state read must never reset generations or consume ACKs.
+  // Persist only an UNKNOWN report in this case; leave all incident/ACK rows intact.
+  const stateErrors=[];
+  if(input.previousComplete!==true)stateErrors.push('previous_incomplete');
+  if(input.acksComplete!==true)stateErrors.push('acks_incomplete');
+  const prevCheck=new Map(),ackCheck=new Map();
+  const validKey=k=>typeof k==='string'&&/^[a-z0-9:_-]+$/.test(k);
+  for(const p of input.previous){
+    if(!p||!validKey(p.key)||!Number.isSafeInteger(p.generation)||p.generation<1||!['open','resolved'].includes(p.status)||typeof p.fingerprint!=='string'){stateErrors.push('previous_invalid');continue;}
+    if(prevCheck.has(p.key))stateErrors.push('previous_duplicate');prevCheck.set(p.key,p);
+  }
+  for(const a of input.acks){
+    if(!a||!validKey(a.key)||!Number.isSafeInteger(a.generation)||a.generation<1){stateErrors.push('ack_invalid');continue;}
+    if(ackCheck.has(a.key))stateErrors.push('ack_duplicate');ackCheck.set(a.key,a);
+    const prior=prevCheck.get(a.key);if(!prior)stateErrors.push('ack_orphan');else if(a.generation>prior.generation)stateErrors.push('ack_ahead');
+  }
+  if(!Array.isArray(expected)||!expected.length||expected.some(s=>!s||!validKey(s.key)||!Number.isFinite(s.maxAgeMinutes)||s.maxAgeMinutes<=0)||new Set(expected.map(s=>s?.key)).size!==expected.length||['backup5m','daily','history14d'].some(k=>!expected.some(s=>s?.key===k)))stateErrors.push('source_specs_invalid');
+  if(stateErrors.length)return {report:{key:'report:plex',checked_at:observed,status:'unknown',counts:{},state_errors:[...new Set(stateErrors)].sort(),open_incidents:null,pending_notifications:null},incidents:[],notifications:[]};
+  const desired = new Map(), counts = {},heldVerified=[];
+function noPriorAttempt(row){return row.attempt_count===0&&!row.claim_id&&!row.claimed_at&&!row.frozen_payload&&!row.crm_record_id&&!row.delivered_at;}
+function verifiedNoSendDisposition(row,input){
+  if(!noPriorAttempt(row))return null;
+  const matches=(input.dispositions||[]).filter(d=>d&&d.schema===1&&d.disposition==='verified_no_send'&&Number(d.ledger_id)===Number(row.id));
+  if(matches.length!==1)return null;const d=matches[0],verified=Date.parse(d.verified_at);
+  if(!Number.isFinite(verified)||verified>now+120000||String(d.account_id)!=='66743'||String(d.scenario_id)!=='20000038245'||!/^\d+$/.test(String(d.source_result_id))||['20000570847','20000570848'].includes(String(d.source_result_id)))return null;
+  if(d.event_key!==row.event_key||String(d.call_id)!==String(row.call_id)||String(d.source_lead_id)!==String(row.source_lead_id)||!d.source_lead_id)return null;
+  if(d.ledger_updated_at!==row.updated_at||d.ledger_native_updated_at!==row.updatedAt||!Number.isFinite(Date.parse(row.updatedAt)))return null;
+  if(!Array.isArray(input.qualifiedMembership))return null;
+  if(input.qualifiedMembership.some(m=>String(m.call_id)===String(row.call_id)&&Math.max(Date.parse(m.checked_at)||0,Date.parse(m.completed_at)||0)>verified))return null;
+  return d;
+}
+function confirmedHistoricalHold(row){
+  if(!noPriorAttempt(row))return false;
+  const rawEvent=row.original_event_json==null?row.event_json:row.original_event_json;
+  let e;try{e=JSON.parse(rawEvent)}catch{return false;}
+  const raw=typeof e?.call?.started_at==='string'?e.call.started_at.trim():'';
+  const at=Date.parse(/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}$/.test(raw)?raw.replace(' ','T')+'+03:00':raw);
+  return Number.isFinite(at)&&at<Date.parse('2026-10-16T00:00:00+03:00');
+}
+
+  const stamp = value => { const t=Date.parse(String(value||'')); return Number.isFinite(t)&&t<=now+120000?t:null; };
+  const age = value => {const t=stamp(value);return t===null?null:Math.max(0,(now-t)/60000)};
+  const safeId = (row,index) => Number.isSafeInteger(Number(row.id))&&Number(row.id)>0?'row:'+Number(row.id):'unidentified:'+index;
+  function add(key,severity,reason,ids=[],details={}) {
+    const members=[...new Set(ids)].sort();
+    // Fingerprint contains only codes and DataTable row IDs; never raw source data.
+    const fingerprint=JSON.stringify([key,severity,reason,members]);
+    desired.set(key,{key,status:'open',severity,reason,fingerprint,details:{...details,count:members.length}});
+  }
+  if(input.ledgerComplete!==true) add('read:ledger_incomplete','critical','Incomplete ledger cannot establish queue health');
+  if(input.archiveComplete!==true) add('read:archive_incomplete','critical','Incomplete archive cannot establish source integrity');
+  if(input.sourcesComplete!==true) add('read:sources_incomplete','critical','Incomplete sources cannot establish freshness');
+  if(input.archiveComplete===true){
+    const invalid=[], conflicts=[], keys=new Map();
+    for(const [i,row] of input.archive.entries()){
+      if(!row||typeof row!=='object'){invalid.push('unidentified:'+i);continue;}
+      const id=safeId(row,i);let events;
+      try{const raw=JSON.parse(String(row.body_json));events=Array.isArray(raw)?raw:[raw];if(!events.length||events.length>50||events.some(e=>!e||e.type!=='call_result'||!e.call?.id))throw Error('shape');}catch{invalid.push(id);}
+      const key=String(row.delivery_key||'');if(!key)invalid.push(id);
+      if(key){const old=keys.get(key);if(old&&old.body!==row.body_json)conflicts.push(old.id,id);else if(!old)keys.set(key,{body:row.body_json,id});}
+    }
+    if(invalid.length)add('archive:invalid','critical','Malformed archived delivery; raw payload withheld',invalid);
+    if(conflicts.length)add('archive:key_conflict','critical','Conflicting immutable bodies for one delivery key',conflicts);
+  }
+  if(input.ledgerComplete===true){const keys=new Map(),duplicates=[];for(const [i,row] of input.ledger.entries()){if(!row||!row.event_key)continue;const key=String(row.event_key),id=safeId(row,i);if(keys.has(key))duplicates.push(keys.get(key),id);else keys.set(key,id);}if(duplicates.length)add('queue:duplicate_event','critical','Duplicate event identity requires reconciliation before dispatch',duplicates);}
+  let oldestPendingMinutes=0; const buckets={pending:[],sending:[],review:[],failed:[],invalid:[],active:[],unknown:[],quarantined:[]};
+  if(input.ledgerComplete===true) for(const [i,row] of input.ledger.entries()) {
+    if(!row||typeof row!=='object'||!row.status) {buckets.invalid.push('unidentified:'+i);continue;}
+    const status=String(row.status);counts[status]=(counts[status]||0)+1; const id=safeId(row,i);
+    // Every persisted ledger row must support a valid date-version CAS and attempt count.
+    if(typeof row.updated_at!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/.test(row.updated_at)||age(row.updated_at)===null||!Number.isSafeInteger(row.attempt_count)||row.attempt_count<0)buckets.invalid.push(id);
+    if(['received','retrying'].includes(status)) {
+      buckets.active.push(id);
+      const timestamp=status==='retrying'?row.next_retry_at:(row.createdAt||row.received_at);
+      // A scheduled retry may legitimately lie far in the future.
+      const t=Date.parse(String(timestamp||''));
+      if(!Number.isFinite(t)||(status==='received'&&t>now+120000)) buckets.invalid.push(id);
+      else {const minutes=Math.max(0,(now-t)/60000);oldestPendingMinutes=Math.max(oldestPendingMinutes,minutes);if(minutes>=cfg.pendingMinutes)buckets.pending.push(id);}
+    } else if(status==='sending') {
+      const minutes=age(row.updated_at);if(minutes===null)buckets.invalid.push(id);else if(minutes>=cfg.sendingMinutes)buckets.sending.push(id);
+    } else if(status==='manual_review'){const d=verifiedNoSendDisposition(row,input);if(d){counts.held_confirmed_no_send=(counts.held_confirmed_no_send||0)+1;heldVerified.push({ledger_row_id:Number(row.id),verified_at:d.verified_at,meaning:'verified_no_send_at_that_check'});}else buckets.review.push(id); }
+    else if(status==='historical_review'){if(confirmedHistoricalHold(row))counts.held_historical=(counts.held_historical||0)+1;else buckets.review.push(id);}
+    else if(status==='failed') buckets.failed.push(id);
+    else if(status==='quarantined') buckets.quarantined.push(id);
+    else if(!['delivered','historical_review'].includes(status)) buckets.unknown.push(id);
+  }
+  if(buckets.pending.length)add('queue:pending_old',oldestPendingMinutes>=60?'critical':'warning','Waiting past pending or retry due threshold',buckets.pending,{oldest_minutes:Math.floor(oldestPendingMinutes)});
+  if(buckets.sending.length)add('queue:sending_stale','critical','Reconcile CRM before any resend; do not reset sending',buckets.sending);
+  if(buckets.review.length)add('queue:manual_review','warning','Uncertain or blocked delivery requires review; no blind retry',buckets.review);
+  if(buckets.quarantined.length)add('queue:quarantined','critical','Poison records are isolated and require repair; no blind retry',buckets.quarantined);
+  if(buckets.failed.length)add('queue:failed','critical','Definitive failure requires diagnosis',buckets.failed);
+  if(buckets.invalid.length)add('queue:invalid_metadata','critical','Missing or invalid queue timing metadata',buckets.invalid);
+  if(buckets.unknown.length)add('queue:unknown_status','critical','Unrecognized queue status requires review',buckets.unknown);
+  if(buckets.active.length>cfg.backlogCount)add('queue:backlog','warning','Backlog exceeds configured batch-capacity threshold',buckets.active,{nominal_batch_limit:5});
+  if(input.sourcesComplete===true) for(const spec of expected) {
+    const found=input.sources.filter(r=>r&&r.key===spec.key);
+    if(found.length!==1){add('source:'+spec.key+':'+(found.length?'duplicate':'missing'),'critical',found.length?'Duplicate source heartbeat':'Source heartbeat missing');continue;}
+    const minutes=age(found[0].last_success_at);
+    if(minutes===null)add('source:'+spec.key+':invalid_time','critical','Source heartbeat timestamp invalid');
+    else if(minutes>=spec.maxAgeMinutes)add('source:'+spec.key+':stale','critical','Source successful completion is stale',[],{age_minutes:Math.floor(minutes),max_age_minutes:spec.maxAgeMinutes});
+  }
+  const previous=new Map(input.previous.filter(r=>r&&r.key).map(r=>[r.key,r]));
+  const acks=new Map(input.acks.filter(r=>r&&r.key).map(r=>[r.key,Number(r.generation)]));
+  const incidents=[];
+  for(const [key,d] of desired) {
+    const p=previous.get(key);const unchanged=p&&p.status==='open'&&p.fingerprint===d.fingerprint;
+    const generation=unchanged?Number(p.generation):Math.max(0,Number(p?.generation)||0)+1;
+    incidents.push({...d,generation,first_seen_at:p?.status==='open'?p.first_seen_at:observed,checked_at:observed,resolved_at:null});
+  }
+  for(const [key,p] of previous) if(!desired.has(key)) {
+    const unknown=(key.startsWith('archive:')&&input.archiveComplete!==true)||(key.startsWith('queue:')&&input.ledgerComplete!==true)||(key.startsWith('source:')&&input.sourcesComplete!==true);
+    if(unknown){incidents.push({...p,checked_at:observed});continue;}
+    if(p.status==='resolved'){incidents.push({...p,checked_at:observed});continue;}
+    incidents.push({...p,status:'resolved',generation:(Number(p.generation)||0)+1,checked_at:observed,resolved_at:observed,fingerprint:JSON.stringify([key,'resolved']),details:{}});
+  }
+  const notifications=incidents.filter(r=>Number(acks.get(r.key)||0)<r.generation).map(r=>({key:r.key,generation:r.generation,status:r.status,severity:r.severity,reason:r.reason,first_seen_at:r.first_seen_at,details:r.details}));
+  counts.action_required_manual_review=buckets.review.length;
+  const incomplete=input.ledgerComplete!==true||input.sourcesComplete!==true||input.archiveComplete!==true;
+  return {report:{key:'report:plex',checked_at:observed,status:incomplete?'unknown':incidents.some(r=>r.status==='open')?'attention':'ok',counts,held_verified:heldVerified,oldest_pending_minutes:Math.floor(oldestPendingMinutes),open_incidents:incidents.filter(r=>r.status==='open').length,pending_notifications:notifications.length},incidents,notifications};
+}

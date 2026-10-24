@@ -2,6 +2,20 @@
 
 Environment: the accepted pilot uses synthetic local n8n2.44.6/PostgreSQL18.6. Production lifecycle, snapshots, networking and installation belong to the parent task. This directory contains no production data or credentials. Source and decision/check/resource evidence are in the existing `outputs/SUMMARY.md` monitoring section.
 
+## Close a reviewed delivery without sending it
+
+The terminal ledger status `closed_no_send` records an approved decision to skip delivery. Keep the original events and the prior reason. Use this status only when `attempt_count` is zero and the row has no claim, frozen payload, CRM receipt, or delivery time. Keep a nonempty reason in `last_error`.
+
+`close-no-send.cjs` adds this status to the existing health evaluator. It stops if the expected code branch has changed. Invalid closures remain critical health incidents. The sender still selects only `received` and `retrying` rows. The collector keeps the existing event key, so closure does not permit a new copy of the same call.
+
+Run the portable evaluator tests from the repository root:
+
+```sh
+pnpm exec node --test fork/monitoring/test-close-no-send.cjs
+```
+
+Publish the compatible health evaluator before changing a ledger status. Use exact row versions and preserve every field outside status, reason, and update times. A rollback must restore the held rows before removing support from the health evaluator. Never reopen an attempted row to perform this operation.
+
 ## Build and source verification
 
 `analytics-source.tar.gz` is the original Git archive of Analytics revision `c8d00ee98c96769949b04599cc3f4bf7fc8e2067`; its SHA is verified before extraction. The two reviewed patches update dependencies and enforce the optional owner-only/live-source policy plus a bounded PG pool. The Dockerfile pins the Node base and replaces the browser's vendored sanitizer from the patched module after copying the original source. Official dashboard JSONs are copied unchanged from Observability revision `cc18e2296a09aec9bc1cd6b5c0462a08d8a6660f`; alert provisioning is excluded.
