@@ -1,0 +1,4 @@
+*
+!Dockerfile
+!patch-license.mjs
+!apply-patch.mjs

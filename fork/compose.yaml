@@ -1,0 +1,82 @@
+name: n8n2398-fork-test
+services:
+  db:
+    image: postgres:18-alpine@sha256:898c60cb390d1085bc97bdd6a1ae968757421df394b071848b52b1c09c89d6a5
+    environment:
+      POSTGRES_USER: fork_test
+      POSTGRES_DB: fork_test
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set the test database password}
+    volumes:
+      - postgres:/var/lib/postgresql
+    networks: [isolated]
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U fork_test -d fork_test]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+  fixture:
+    image: docker.n8n.io/n8nio/n8n:2.39.8@sha256:b73045abaddb40cb4024e86eea1b1f69093501a7339f685a4cd486b7743d23ae
+    entrypoint: [node, /fixture.mjs]
+    environment:
+      FIXTURE_A_SECRET: ${FIXTURE_A_SECRET:?Set fixture A secret}
+      FIXTURE_B_SECRET: ${FIXTURE_B_SECRET:?Set fixture B secret}
+    volumes:
+      - ./fixture.mjs:/fixture.mjs:ro
+    read_only: true
+    networks: [isolated]
+  n8n:
+    image: ${N8N_FORK_IMAGE:-n8n-personal:2.39.8}
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: db
+      DB_POSTGRESDB_DATABASE: fork_test
+      DB_POSTGRESDB_USER: fork_test
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD:?Set the test database password}
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?Set a test-only encryption key}
+      N8N_HOST: localhost
+      N8N_EDITOR_BASE_URL: http://localhost:15678
+      WEBHOOK_URL: http://localhost:15678/
+      N8N_SECURE_COOKIE: 'false'
+      N8N_DIAGNOSTICS_ENABLED: 'false'
+      N8N_VERSION_NOTIFICATIONS_ENABLED: 'false'
+      N8N_TEMPLATES_ENABLED: 'false'
+      N8N_LICENSE_AUTO_RENEW_ENABLED: 'false'
+      N8N_PERSONALIZATION_ENABLED: 'false'
+      N8N_INSIGHTS_FLUSH_INTERVAL_SECONDS: '1'
+      N8N_INSIGHTS_COMPACTION_INTERVAL_MINUTES: '1'
+      N8N_LOG_LEVEL: warn
+      GENERIC_TIMEZONE: Europe/Moscow
+      TZ: Europe/Moscow
+    volumes:
+      - n8n_data:/home/node/.n8n
+    networks: [isolated]
+    depends_on:
+      db:
+        condition: service_healthy
+      fixture:
+        condition: service_started
+  # Docker does not publish ports for an internal-only container. Keep n8n
+  # isolated and expose only a fixed TCP relay through the loopback binding.
+  ui-gateway:
+    image: docker.n8n.io/n8nio/n8n:2.39.8@sha256:b73045abaddb40cb4024e86eea1b1f69093501a7339f685a4cd486b7743d23ae
+    entrypoint: [node, /fixture.mjs]
+    environment:
+      FIXTURE_MODE: ui-gateway
+    volumes:
+      - ./fixture.mjs:/fixture.mjs:ro
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    ports:
+      - 127.0.0.1:15678:5678
+    networks: [ingress, isolated]
+    depends_on:
+      n8n:
+        condition: service_started
+networks:
+  ingress:
+  isolated:
+    internal: true
+volumes:
+  postgres:
+  n8n_data:
