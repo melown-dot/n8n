@@ -1,13 +1,11 @@
 name: 'Util: Cleanup CI Docker Images'
 
 on:
-  schedule:
-    # Daily cleanup at 3 AM UTC
-    - cron: '0 3 * * *'
-
+  workflow_dispatch:
 jobs:
   cleanup:
     name: 'Delete stale CI images'
+    if: github.repository == 'n8n-io/n8n'
     runs-on: ubuntu-slim
     permissions:
       packages: write

@@ -5,8 +5,6 @@ name: 'Test: E2E on -pc image'
 # run the full suite against a test-enabled twin (build-variant: pc).
 
 on:
-  schedule:
-    - cron: '0 2 * * *' # after the nightly Docker build at midnight
   workflow_dispatch:
     inputs:
       published-image:

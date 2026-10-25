@@ -1,8 +1,6 @@
 name: 'Test: E2E Coverage Nightly'
 
 on:
-  schedule:
-    - cron: '0 2 * * *' # Nightly at 02:00 UTC
   workflow_dispatch:
 
 concurrency:
@@ -15,6 +13,7 @@ jobs:
   # ~30s cache hits rather than racing to build in parallel from cold.
   build:
     name: Install & Build
+    if: github.repository == 'n8n-io/n8n'
     runs-on: blacksmith-4vcpu-ubuntu-2204
     steps:
       - name: Checkout
@@ -25,6 +24,7 @@ jobs:
 
   prepare-docker:
     name: Prepare Docker (coverage)
+    if: github.repository == 'n8n-io/n8n'
     uses: ./.github/workflows/prepare-docker-reusable.yml
     with:
       build-variant: coverage
@@ -132,6 +132,7 @@ jobs:
   # (each still pins its own Python version: 3.13 task-runner, 3.11 evals).
   python-coverage:
     name: Python Coverage (task-runner + ai-workflow-builder)
+    if: github.repository == 'n8n-io/n8n'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

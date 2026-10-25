@@ -1,0 +1,51 @@
+name: 'Fork: Lightweight Checks'
+
+on:
+  push:
+    paths:
+      - 'fork/**'
+      - '.github/workflows/fork-ci.yml'
+  pull_request:
+    paths:
+      - 'fork/**'
+      - '.github/workflows/fork-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fork-checks:
+    name: Fork patch checks and monitoring tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: '24'
+
+      - name: Run portable monitoring tests
+        run: node --test fork/monitoring/test-close-no-send.cjs
+
+      - name: Install pinned pnpm
+        run: npm install --global pnpm@10.18.3
+
+      - name: Install fork dependencies without lifecycle scripts
+        working-directory: fork
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Lint fork sources
+        working-directory: fork
+        run: pnpm lint
+
+      - name: Typecheck fork sources
+        working-directory: fork
+        run: pnpm typecheck

@@ -1,9 +1,6 @@
 name: 'Test: Nightly SBOM Validation'
 
 on:
-  schedule:
-    # Run after the 00:00 UTC nightly Docker build.
-    - cron: '0 4 * * *'
   workflow_dispatch:
 
 permissions:
