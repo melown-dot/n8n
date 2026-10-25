@@ -38,16 +38,26 @@ jobs:
       - name: Install pinned pnpm
         run: npm install --global pnpm@10.18.3
 
+      # The upstream monorepo also contains a pnpm workspace. Copy the small
+      # distribution package outside that tree so its own lockfile and pinned
+      # pnpm/TypeScript versions are actually used.
+      - name: Prepare standalone fork package
+        run: |
+          mkdir -p "$RUNNER_TEMP/fork-package"
+          cp -a fork/. "$RUNNER_TEMP/fork-package/"
+
       - name: Install fork dependencies without lifecycle scripts
         id: fork-deps
-        working-directory: fork
-        run: pnpm install --frozen-lockfile --ignore-scripts
+        working-directory: ${{ runner.temp }}/fork-package
+        run: |
+          test "$(pnpm --version)" = '10.18.3'
+          pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Lint fork sources
-        working-directory: fork
+        working-directory: ${{ runner.temp }}/fork-package
         run: pnpm lint
 
       - name: Typecheck fork sources
         if: ${{ !cancelled() && steps.fork-deps.outcome == 'success' }}
-        working-directory: fork
+        working-directory: ${{ runner.temp }}/fork-package
         run: pnpm typecheck
