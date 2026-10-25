@@ -2,8 +2,6 @@ name: 'Util: Clean Stale Branches'
 run-name: "${{ github.event_name == 'workflow_dispatch' && format('Util: Clean Stale Branches (dry-run={0}, days={1}, exclude={2})', inputs['dry-run'], inputs.days, inputs.exclude) || '' }}"
 
 on:
-  schedule:
-    - cron: '0 10 * * 1' # Every monday
   workflow_dispatch:
     inputs:
       dry-run:

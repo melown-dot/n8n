@@ -23,8 +23,6 @@
 name: 'Security: Sync Bundle Branches'
 
 on:
-  schedule:
-    - cron: '0 3 * * *'
   workflow_dispatch:
 
 # Least privilege by default; the sync job opts into exactly what it needs.

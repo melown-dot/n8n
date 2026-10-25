@@ -22,11 +22,6 @@ on:
         description: 'Old release image to seed on (upgrade only; empty = pinned script default)'
         type: string
         default: ''
-  schedule:
-    # Twice a day, 09:00 and 21:00 UTC.
-    - cron: '0 9,21 * * *'
-  # PR events use the workflow file from the branch, so changes to the tests
-  # verify themselves (both modes) before the merge.
   pull_request:
     paths:
       - 'packages/quality/testing/playwright/tests/infrastructure/encryption/**'

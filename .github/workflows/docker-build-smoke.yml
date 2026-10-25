@@ -20,8 +20,6 @@ env:
   DOCKER_BUILD_DISTROLESS: 'true'
 
 on:
-  schedule:
-    - cron: '0 3 * * *' # 3:00 AM UTC, after the nightly Docker build at midnight
   pull_request:
     paths:
       - 'docker/docker-bake.hcl'

@@ -1,8 +1,6 @@
 name: 'Test: Benchmark Destroy Env'
 
 on:
-  schedule:
-    - cron: '0 5 * * *'
   workflow_dispatch:
 
 permissions:
@@ -15,6 +13,8 @@ concurrency:
 
 jobs:
   build:
+    # Upstream Azure infrastructure is not provisioned in distribution forks.
+    if: github.repository == 'n8n-io/n8n'
     runs-on: ubuntu-latest
     environment: benchmarking
 
