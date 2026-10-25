@@ -39,6 +39,7 @@ jobs:
         run: npm install --global pnpm@10.18.3
 
       - name: Install fork dependencies without lifecycle scripts
+        id: fork-deps
         working-directory: fork
         run: pnpm install --frozen-lockfile --ignore-scripts
 
@@ -47,5 +48,6 @@ jobs:
         run: pnpm lint
 
       - name: Typecheck fork sources
+        if: ${{ !cancelled() && steps.fork-deps.outcome == 'success' }}
         working-directory: fork
         run: pnpm typecheck
